@@ -26,9 +26,8 @@ This boils down to the following points:
 And also the following bonus point, which I learned along the way:
 * Avoid a `verbose` parameter; an LLM will always use it.
 
-== Always remember: ==
-
-== "Context is King" ==
+>[!NOTE] Always remember:
+> "Context is King"
 
 ## Build a Sample MCP Server
 ### User Story
