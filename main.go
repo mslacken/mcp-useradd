@@ -38,23 +38,58 @@ type Group struct {
 // Output struct for the ListUsers tool.
 type ListUsersOutput struct {
 	Users  []User  `json:"users" jsonschema:"the list of users on the system"`
-	Groups []Group `json:"groups" jsonschema:"the list of groups on the system"`
+	Groups []Group `json:"groups,omitempty" jsonschema:"the list of groups on the system"`
 }
 
 // Input struct for the ListUsers tool.
-type ListUsersInput struct{}
+type ListUsersInput struct {
+	Username string `json:"username,omitempty" jsonschema:"the optional username to filter by"`
+}
 
 // ListUsers function implements the ListUsers tool.
-func ListUsers(ctx context.Context, req *mcp.CallToolRequest, _ ListUsersInput) (
+func ListUsers(ctx context.Context, req *mcp.CallToolRequest, input ListUsersInput) (
 	*mcp.CallToolResult, ListUsersOutput, error,
 ) {
 	slog.Info("ListUsers tool called")
-	cmd := exec.Command("getent", "passwd")
+
+	users, err := getUsers(input.Username)
+	if err != nil {
+		return nil, ListUsersOutput{}, err
+	}
+
+	if input.Username != "" {
+		return nil, ListUsersOutput{Users: users}, nil
+	}
+
+	groups, err := getGroups()
+	if err != nil {
+		return nil, ListUsersOutput{}, err
+	}
+
+	for _, group := range groups {
+		for _, member := range group.Members {
+			for i, user := range users {
+				if user.Username == member {
+					users[i].Groups = append(users[i].Groups, group.Name)
+				}
+			}
+		}
+	}
+
+	return nil, ListUsersOutput{Users: users, Groups: groups}, nil
+}
+
+func getUsers(username string) ([]User, error) {
+	args := []string{"passwd"}
+	if username != "" {
+		args = append(args, username)
+	}
+	cmd := exec.Command("getent", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
-		return nil, ListUsersOutput{}, err
+		return nil, err
 	}
 	var users []User
 	scanner := bufio.NewScanner(&out)
@@ -78,13 +113,42 @@ func ListUsers(ctx context.Context, req *mcp.CallToolRequest, _ ListUsersInput) 
 			Groups:       []string{},
 		})
 	}
+	if username != "" && len(users) > 0 {
+		groups, err := getUserGroups(username)
+		if err == nil {
+			users[0].Groups = groups
+		}
+	}
+	return users, nil
+}
 
-	cmd = exec.Command("getent", "group")
+func getUserGroups(username string) ([]string, error) {
+	cmd := exec.Command("getent", "group", username)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+	var groups []string
+	scanner := bufio.NewScanner(&out)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ":")
+		if len(parts) > 0 {
+			groups = append(groups, parts[0])
+		}
+	}
+	return groups, nil
+}
+
+func getGroups() ([]Group, error) {
+	cmd := exec.Command("getent", "group")
 	var groupOut bytes.Buffer
 	cmd.Stdout = &groupOut
-	err = cmd.Run()
+	err := cmd.Run()
 	if err != nil {
-		return nil, ListUsersOutput{}, err
+		return nil, err
 	}
 	var groups []Group
 	groupScanner := bufio.NewScanner(&groupOut)
@@ -102,17 +166,8 @@ func ListUsers(ctx context.Context, req *mcp.CallToolRequest, _ ListUsersInput) 
 			GID:      gid,
 			Members:  members,
 		})
-		groupName := parts[0]
-		for _, member := range members {
-			for i, user := range users {
-				if user.Username == member {
-					users[i].Groups = append(users[i].Groups, groupName)
-				}
-			}
-		}
 	}
-
-	return nil, ListUsersOutput{Users: users, Groups: groups}, nil
+	return groups, nil
 }
 
 func main() {
